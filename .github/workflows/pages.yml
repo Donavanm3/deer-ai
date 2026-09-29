@@ -1,0 +1,44 @@
+# Publishes the website (chat, admin, plans, API pages) to GitHub Pages. The AI keeps running on your server.
+# Turn on:  repo Settings > Pages > Source: GitHub Actions
+#           repo Settings > Secrets and variables > Actions > Variables: DEER_API_URL = https://ai.dashlith.com
+# And on the server, in /opt/deer-ai/deer.env:  DEER_ALLOWED_ORIGINS=https://YOURNAME.github.io
+name: Website on GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: ${{ vars.DEER_API_URL != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the pages
+        run: python tools/build_pages.py --api "${{ vars.DEER_API_URL }}" --out _site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,67 @@
+# Every push to main: run all tests, then (if you turned it on) update your VPS.
+# Turn on:  repo Settings > Secrets and variables > Actions
+#   Variables: DEPLOY_TO_VPS = true
+#   Secrets:   VPS_HOST (e.g. 194.163.156.40), VPS_USER (e.g. root), VPS_SSH_KEY (a private key the VPS accepts)
+#   Optional:  VPS_HOST_KEY (the line from `ssh-keyscan YOUR_IP`) to pin the server's identity
+name: Test and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt pytest httpx
+      - name: Run the tests
+        run: python -m pytest -q tests
+
+  deploy:
+    needs: test
+    if: ${{ vars.DEPLOY_TO_VPS == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HOST: ${{ secrets.VPS_HOST }}
+      USER_NAME: ${{ secrets.VPS_USER }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up SSH
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          HOST_KEY: ${{ secrets.VPS_HOST_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          if [ -n "$HOST_KEY" ]; then printf '%s\n' "$HOST_KEY" > ~/.ssh/known_hosts; else ssh-keyscan -H "$HOST" > ~/.ssh/known_hosts; fi
+      - name: Upload the code (your data, settings and venv on the server are left alone)
+        run: |
+          rsync -az --delete \
+            --exclude .git --exclude .github --exclude deer_data --exclude deer.env --exclude venv \
+            --exclude examples --exclude _site --exclude __pycache__ \
+            -e "ssh -i ~/.ssh/deploy" ./ "$USER_NAME@$HOST:/opt/deer-ai/"
+      - name: Install and restart
+        run: |
+          ssh -i ~/.ssh/deploy "$USER_NAME@$HOST" '
+            set -e
+            /opt/deer-ai/venv/bin/pip install -q -r /opt/deer-ai/requirements.txt
+            chown -R deer:deer /opt/deer-ai
+            systemctl restart deer-ai
+            for i in $(seq 1 20); do
+              curl -fsS http://127.0.0.1:8000/api/auth/status >/dev/null && echo "Deer AI is up." && exit 0
+              sleep 2
+            done
+            echo "Deer AI did not come back up. Last log lines:"; journalctl -u deer-ai -n 40 --no-pager; exit 1'

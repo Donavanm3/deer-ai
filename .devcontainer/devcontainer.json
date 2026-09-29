@@ -1,0 +1,13 @@
+{
+  "name": "Deer AI",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "postCreateCommand": "pip install -r requirements.txt pytest httpx && python tools/make_demo_data.py",
+  "postAttachCommand": "python run.py --host 0.0.0.0 --port 8000",
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": { "label": "Deer AI", "onAutoForward": "openBrowser" }
+  },
+  "customizations": {
+    "codespaces": { "openFiles": ["README.md"] }
+  }
+}
